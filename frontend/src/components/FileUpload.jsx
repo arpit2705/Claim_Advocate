@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 
-export default function FileUpload({ label, sublabel, accept, multiple, files, onFilesChange, icon }) {
+export default function FileUpload({ label, sublabel, accept, multiple, files, onFilesChange, icon, customStyle }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -33,9 +33,11 @@ export default function FileUpload({ label, sublabel, accept, multiple, files, o
 
   return (
     <div className="w-full">
-      <label className="block text-sm font-semibold text-navy mb-1.5 uppercase tracking-wider">
-        {label}
-      </label>
+      {label && (
+        <label className="block text-sm font-semibold text-navy mb-1.5 uppercase tracking-wider">
+          {label}
+        </label>
+      )}
       {sublabel && (
         <p className="text-xs text-gray-400 mb-3">{sublabel}</p>
       )}
@@ -45,7 +47,7 @@ export default function FileUpload({ label, sublabel, accept, multiple, files, o
         onDrop={handleDrop}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
+        className={customStyle ? customStyle : `relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
           dragOver
             ? 'border-primary bg-primary/5 scale-[1.01]'
             : files.length > 0

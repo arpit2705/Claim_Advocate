@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import InsuranceGlobe from './InsuranceGlobe';
 
-export default function Hero({ onCheckClaim, onSeeHow }) {
+export default function Hero({ onNavigate }) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -32,16 +32,10 @@ export default function Hero({ onCheckClaim, onSeeHow }) {
 
             <div className="flex flex-wrap gap-4 mb-10">
               <button
-                onClick={onCheckClaim}
-                className="bg-primary hover:bg-primary-dark text-white font-bold px-8 py-4 rounded-full text-lg transition-all shadow-[0_8px_30px_rgb(50,129,183,0.3)] hover:shadow-[0_8px_30px_rgb(50,129,183,0.5)] hover:-translate-y-1"
+                onClick={() => onNavigate('moduleA')}
+                className="bg-primary hover:bg-primary-dark text-white font-bold px-10 py-5 rounded-full text-lg transition-all shadow-[0_8px_30px_rgb(50,129,183,0.3)] hover:shadow-[0_8px_30px_rgb(50,129,183,0.5)] hover:-translate-y-1"
               >
                 Check My Claim
-              </button>
-              <button
-                onClick={onSeeHow}
-                className="bg-white border-2 border-primary/10 text-primary hover:border-primary/30 font-bold px-8 py-4 rounded-full text-lg transition-all hover:bg-surface-1/30"
-              >
-                See How It Works
               </button>
             </div>
             
@@ -65,6 +59,26 @@ export default function Hero({ onCheckClaim, onSeeHow }) {
                  style={{ transform: `scale(${isHovered ? 1.3 : 1.25})` }}>
                <InsuranceGlobe />
             </div>
+
+            {/* Scattered UI Panels */}
+            {/* Top Right Panel */}
+            <div className={`absolute -top-4 right-8 bg-white/90 backdrop-blur border border-primary/20 rounded-2xl p-4 shadow-[0_10px_40px_rgba(50,129,183,0.15)] z-20 transition-all duration-[2000ms] ease-in-out ${isHovered ? 'translate-y-2 -translate-x-2' : ''}`}>
+              <p className="text-[10px] font-bold text-navy/40 uppercase tracking-widest mb-1">Readiness</p>
+              <p className="text-xl font-black text-primary mb-0.5 tracking-tight">92 / 100</p>
+            </div>
+
+            {/* Middle Left Panel */}
+            <div className={`absolute top-1/3 -left-4 bg-white/90 backdrop-blur border border-accent-3/20 rounded-2xl p-4 shadow-[0_10px_40px_rgba(103,207,195,0.15)] z-20 transition-all duration-[2500ms] ease-in-out ${isHovered ? '-translate-y-4 translate-x-2' : ''}`}>
+              <p className="text-[10px] font-bold text-navy/40 uppercase tracking-widest mb-1">Policy Check</p>
+              <p className="text-sm font-bold text-navy tracking-tight">Requirement Satisfied</p>
+            </div>
+
+            {/* Bottom Right Panel */}
+            <div className={`absolute bottom-16 right-0 bg-white/90 backdrop-blur border border-amber-500/20 rounded-2xl p-4 shadow-[0_10px_40px_rgba(245,158,11,0.15)] z-20 transition-all duration-[3000ms] ease-in-out ${isHovered ? '-translate-y-2 -translate-x-4' : ''}`}>
+              <p className="text-[10px] font-bold text-navy/40 uppercase tracking-widest mb-1">Rejection Analysis</p>
+              <p className="text-sm font-bold text-navy tracking-tight text-amber-500">Questionable</p>
+            </div>
+            
           </div>
         </div>
       </div>

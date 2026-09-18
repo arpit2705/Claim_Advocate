@@ -49,45 +49,60 @@ export default function ModuleA() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 animate-fade-in" id="module-a">
-      <div className="text-center mb-10">
-        <h2 className="text-3xl font-bold text-navy mb-3">Before You Submit</h2>
-        <p className="text-gray-500">Upload your policy and evidence to check your claim readiness.</p>
-      </div>
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 animate-fade-in" id="module-a">
+      {status === 'idle' && (
+        <div className="text-center mb-16 mt-8">
+          <p className="text-primary font-black uppercase tracking-widest text-sm mb-4">Before You Submit</p>
+          <h2 className="text-4xl md:text-5xl font-black text-navy mb-6 tracking-tight">Know what's required before you file.</h2>
+          <p className="text-xl text-navy/70 font-medium max-w-2xl mx-auto">Upload your policy and claim evidence to see whether you're ready to submit.</p>
+        </div>
+      )}
 
       {status === 'idle' && (
-        <div className="space-y-8">
-          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-100">
-            <FileUpload 
-              label="Policy Document" 
-              sublabel="Upload your insurance policy PDF"
-              accept=".pdf"
-              multiple={false}
-              files={policyFiles}
-              onFilesChange={setPolicyFiles}
-            />
+        <div className="space-y-8 max-w-3xl mx-auto">
+          <div className="bg-white rounded-3xl p-8 md:p-10 shadow-lg border border-gray-100 transition-all hover:shadow-xl">
+            <h3 className="text-sm font-bold text-navy/50 mb-2 tracking-widest uppercase">Policy</h3>
+            <p className="text-xl font-bold text-navy mb-6">Upload your insurance policy document</p>
+            
+            <div className="mt-2">
+              <FileUpload 
+                label="" 
+                sublabel=""
+                accept=".pdf"
+                multiple={false}
+                files={policyFiles}
+                onFilesChange={setPolicyFiles}
+                customStyle="border-2 border-dashed border-gray-200 rounded-2xl p-10 hover:border-primary/50 hover:bg-gray-50 transition-colors"
+              />
+            </div>
           </div>
 
-          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-100">
-            <FileUpload 
-              label="Claim Evidence" 
-              sublabel="Upload bills, discharge summaries, FIRs, etc."
-              accept=".pdf,.png,.jpg,.jpeg"
-              multiple={true}
-              files={claimFiles}
-              onFilesChange={setClaimFiles}
-              icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>}
-            />
+          <div className="bg-white rounded-3xl p-8 md:p-10 shadow-lg border border-gray-100 transition-all hover:shadow-xl">
+            <h3 className="text-sm font-bold text-navy/50 mb-2 tracking-widest uppercase">Claim Evidence</h3>
+            <p className="text-xl font-bold text-navy mb-6">Upload bills, discharge summaries, FIRs and other supporting documents</p>
+            
+            <div className="mt-2">
+              <FileUpload 
+                label="" 
+                sublabel=""
+                accept=".pdf,.png,.jpg,.jpeg"
+                multiple={true}
+                files={claimFiles}
+                onFilesChange={setClaimFiles}
+                customStyle="border-2 border-dashed border-gray-200 rounded-2xl p-10 hover:border-primary/50 hover:bg-gray-50 transition-colors"
+                icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>}
+              />
+            </div>
           </div>
 
-          <div className="flex justify-center pt-4">
+          <div className="flex justify-center pt-8">
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className={`px-10 py-4 rounded-full font-bold text-lg transition-all ${
+              className={`px-12 py-5 rounded-full font-bold text-xl transition-all shadow-[0_8px_30px_rgb(50,129,183,0.3)] hover:-translate-y-1 ${
                 canSubmit 
-                  ? 'bg-primary hover:bg-primary-dark text-white hover:shadow-lg hover:shadow-primary/30 hover:-translate-y-0.5' 
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  ? 'bg-primary hover:bg-primary-dark text-white hover:shadow-[0_8px_30px_rgb(50,129,183,0.5)]' 
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none hover:translate-y-0'
               }`}
             >
               Check Readiness
