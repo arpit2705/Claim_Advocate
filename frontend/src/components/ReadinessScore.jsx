@@ -42,7 +42,14 @@ export default function ReadinessScore({ score, grounded }) {
         <div className={`w-2 h-2 rounded-full`} style={{ backgroundColor: color.stroke }} />
         <span className={`text-sm font-semibold ${color.text}`}>{color.label}</span>
       </div>
-      {!grounded && (
+      {grounded ? (
+        <div className="mt-4 bg-green-50 border border-green-200 rounded-xl px-4 py-3 max-w-sm text-center">
+          <p className="text-green-800 text-sm font-semibold flex items-center justify-center gap-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Fully Verified
+          </p>
+        </div>
+      ) : (
         <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 max-w-sm text-center">
           <p className="text-amber-800 text-sm font-semibold mb-1">Unable to Fully Verify</p>
           <p className="text-amber-600 text-xs">

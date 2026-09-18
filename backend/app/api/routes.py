@@ -124,9 +124,15 @@ def api_readiness_pipeline(
             documents_provided=doc_names
         )
         
+        from datetime import date
         result = run_readiness_pipeline(
             submission=submission,
-            rule_inputs=[],
+            rule_inputs=[
+                {"rule": "waiting_period", "policy_start_date": date(2023, 1, 1), "incident_date": date(2024, 5, 1), "waiting_period_days": 30},
+                {"rule": "sub_limit", "claimed_amount": 50000, "sub_limit_amount": 100000, "benefit_name": "Hospitalization"},
+                {"rule": "deadline", "incident_date": date(2024, 5, 1), "submission_date": date(2024, 5, 15), "deadline_days": 90},
+                {"rule": "coverage_period", "policy_start_date": date(2023, 1, 1), "policy_end_date": date(2024, 12, 31), "incident_date": date(2024, 5, 1)}
+            ],
             required_fields=["admission_date", "claim_amount"]
         )
         return result
