@@ -12,6 +12,7 @@ export default function ModuleA() {
   const [policyFiles, setPolicyFiles] = useState([]);
   const [claimFiles, setClaimFiles] = useState([]);
   const [status, setStatus] = useState('idle'); // idle | loading | success | error
+  const [errorMessage, setErrorMessage] = useState(null);
   const [result, setResult] = useState(null);
 
   const canSubmit = policyFiles.length > 0 && claimFiles.length > 0;
@@ -19,24 +20,15 @@ export default function ModuleA() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setStatus('loading');
+    setErrorMessage(null);
     
     try {
-      // In a real app we'd call the API:
-      // const data = await checkReadiness(policyFiles[0], claimFiles);
-      
-      // For demo, simulate API call delay and use mock data
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Toggle between good and bad mock data based on number of claim files for demo variety
-      if (claimFiles.length > 1) {
-        setResult(mockReadinessResultValid);
-      } else {
-        setResult(mockReadinessResult);
-      }
-      
+      const data = await checkReadiness(policyFiles[0], claimFiles);
+      setResult(data);
       setStatus('success');
     } catch (err) {
       console.error(err);
+      setErrorMessage(err.message);
       setStatus('error');
     }
   };
@@ -45,6 +37,7 @@ export default function ModuleA() {
     setPolicyFiles([]);
     setClaimFiles([]);
     setStatus('idle');
+    setErrorMessage(null);
     setResult(null);
   };
 
@@ -114,7 +107,7 @@ export default function ModuleA() {
       {status === 'loading' && <LoadingState />}
 
       {status === 'error' && (
-        <ErrorAlert onRetry={() => setStatus('idle')} />
+        <ErrorAlert message={errorMessage} onRetry={() => { setStatus('idle'); setErrorMessage(null); }} />
       )}
 
       {status === 'success' && result && (

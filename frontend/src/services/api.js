@@ -1,4 +1,16 @@
-const API_BASE = '';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+async function handleResponse(res) {
+  if (!res.ok) {
+    let errMsg = `Server error: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.detail) errMsg = errBody.detail;
+    } catch (e) {}
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
 
 export async function checkReadiness(policyFile, claimFiles) {
   const formData = new FormData();
@@ -12,11 +24,7 @@ export async function checkReadiness(policyFile, claimFiles) {
     body: formData,
   });
 
-  if (!res.ok) {
-    throw new Error(`Server error: ${res.status}`);
-  }
-
-  return res.json();
+  return handleResponse(res);
 }
 
 export async function checkAdjudication(policyFile, rejectionFile) {
@@ -29,11 +37,7 @@ export async function checkAdjudication(policyFile, rejectionFile) {
     body: formData,
   });
 
-  if (!res.ok) {
-    throw new Error(`Server error: ${res.status}`);
-  }
-
-  return res.json();
+  return handleResponse(res);
 }
 
 export async function runEval() {
@@ -41,9 +45,5 @@ export async function runEval() {
     method: 'POST',
   });
 
-  if (!res.ok) {
-    throw new Error(`Server error: ${res.status}`);
-  }
-
-  return res.json();
+  return handleResponse(res);
 }

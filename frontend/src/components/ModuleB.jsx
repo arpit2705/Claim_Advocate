@@ -8,12 +8,12 @@ import EvidenceTrace from './EvidenceTrace';
 import AppealLetter from './AppealLetter';
 import RequirementCheck from './RequirementCheck';
 import { checkAdjudication } from '../services/api';
-import { mockAdjudicationResult, mockAdjudicationResultValid } from '../data/mockData';
 
 export default function ModuleB() {
   const [policyFiles, setPolicyFiles] = useState([]);
   const [rejectionFiles, setRejectionFiles] = useState([]);
   const [status, setStatus] = useState('idle'); // idle | loading | success | error
+  const [errorMessage, setErrorMessage] = useState(null);
   const [result, setResult] = useState(null);
 
   const canSubmit = policyFiles.length > 0 && rejectionFiles.length > 0;
@@ -21,24 +21,15 @@ export default function ModuleB() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setStatus('loading');
+    setErrorMessage(null);
     
     try {
-      // In a real app we'd call the API:
-      // const data = await checkAdjudication(policyFiles[0], rejectionFiles[0]);
-      
-      // For demo, simulate API call delay and use mock data
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Toggle mock data based on file size/name for demo variety
-      if (rejectionFiles[0].name.toLowerCase().includes('valid')) {
-        setResult(mockAdjudicationResultValid);
-      } else {
-        setResult(mockAdjudicationResult);
-      }
-      
+      const data = await checkAdjudication(policyFiles[0], rejectionFiles[0]);
+      setResult(data);
       setStatus('success');
     } catch (err) {
       console.error(err);
+      setErrorMessage(err.message);
       setStatus('error');
     }
   };
@@ -47,6 +38,7 @@ export default function ModuleB() {
     setPolicyFiles([]);
     setRejectionFiles([]);
     setStatus('idle');
+    setErrorMessage(null);
     setResult(null);
   };
 
@@ -107,16 +99,16 @@ export default function ModuleB() {
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none hover:translate-y-0'
               }`}
             >
-              Check My Rejection
+              Analyze Rejection
             </button>
           </div>
         </div>
       )}
 
-      {status === 'loading' && <LoadingState message="Analyzing rejection letter..." />}
+      {status === 'loading' && <LoadingState message="Analyzing rejection rationale and policy clauses..." />}
 
       {status === 'error' && (
-        <ErrorAlert onRetry={() => setStatus('idle')} />
+        <ErrorAlert message={errorMessage} onRetry={() => { setStatus('idle'); setErrorMessage(null); }} />
       )}
 
       {status === 'success' && result && (
@@ -144,12 +136,30 @@ export default function ModuleB() {
             
             <ClauseComparison 
               matchedClauseId={result.verdict.matched_clause_id}
-              matchedClauseText="The policy document specifies a 24-month waiting period for Category II conditions. The policyholder's condition (Type 2 Diabetes) is listed as Category II in Schedule A." // Mock actual clause text extraction
-              insurerReason="Your claim is denied under Clause 4.2.1 due to the 48-month waiting period for pre-existing conditions." // Mock extraction from letter
+              matchedClauseText={result.matched_clause?.raw_text || "Clause text not found."}
+              insurerReason="Your claim is denied based on the provided rejection letter." 
               mismatchExplanation={result.verdict.mismatch_explanation}
             />
             
-            <EvidenceTrace passes={result.verdict.pass_results} />
+            <EvidenceTrace 
+              matchedClause={result.matched_clause} 
+              referencedFacts={result.referenced_facts} 
+            />
+
+            {/* Reasoning Pass Results */}
+            {result.verdict.pass_results && result.verdict.pass_results.length > 0 && (
+              <div className="mt-6 p-5 bg-gray-50 border border-gray-100 rounded-2xl">
+                <h5 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Reasoning Pass Results</h5>
+                <ul className="space-y-2">
+                  {result.verdict.pass_results.map((pass, i) => (
+                    <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                      <span className="bg-gray-200 text-gray-500 rounded-full w-5 h-5 flex items-center justify-center shrink-0 text-xs font-bold">{i + 1}</span>
+                      {pass}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           <div>
