@@ -31,8 +31,10 @@ _EXTRACTION_INSTRUCTION = """
 You are a claim document analysis assistant. Extract ALL factual fields from the
 documents below. For each fact return a JSON object with exactly these fields:
   - fact_id: string (e.g. "F-001", "F-002", ...)
-  - field: the name of the fact field (e.g. "admission_date", "discharge_date",
-           "claim_amount", "patient_name", "hospital_name", "diagnosis", "policy_number")
+  - field: the canonical name of the fact field. You MUST use one of these exact names if applicable:
+           admission_date, discharge_date, claim_amount, diagnosis, treatment_type,
+           policy_number, patient_name, hospital_name, previous_treatment_date.
+           Do not invent alternate field names like "total_billed_amount" or "claim_amount_requested".
   - value: the raw value as it appears in the document
   - source_document: the document label provided
   - page: integer page number where found (null if unknown)
@@ -179,11 +181,18 @@ def _call_llm(documents: dict[str, str]) -> list[dict[str, Any]]:
     return []
 
 
+from app.extraction.field_normalization import normalize_field_name
+
 def _build_facts(raw_facts: list[dict[str, Any]], source_label: str) -> list[EvidenceFact]:
     """Validates and normalizes raw LLM fact dicts into EvidenceFact objects."""
+    print("--- DEBUG: Extracted facts from LLM ---")
+    for item in raw_facts:
+        print(f"DEBUG - field: '{item.get('field')}', value: '{item.get('value')}'")
+    print("---------------------------------------")
     facts: list[EvidenceFact] = []
     for idx, item in enumerate(raw_facts):
-        field = str(item.get("field", "unknown")).strip()
+        raw_field = str(item.get("field", "unknown")).strip()
+        field = normalize_field_name(raw_field)
         raw_value = str(item.get("value", "")).strip()
         value = normalize_value(field, raw_value)
 

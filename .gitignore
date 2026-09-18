@@ -1,5 +1,8 @@
 # Environment variables
 frontend/.env
+backend/.env
+.env
+.env.*
 
 # Node
 node_modules/
@@ -7,3 +10,23 @@ node_modules/
 # Python
 __pycache__/
 *.py[cod]
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Build / generated files
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
