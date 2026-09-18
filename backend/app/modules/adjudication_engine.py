@@ -114,6 +114,10 @@ def run_adjudication_pipeline(
         grounded=grounded,
     )
 
+    matched_clause = None
+    if final_verdict_obj.matched_clause_id:
+        matched_clause = next((c for c in clauses if c.clause_id == final_verdict_obj.matched_clause_id), None)
+
     return ClaimAdvocateResult(
         verdict=final_verdict_obj,
         contradictions=contradictions,
@@ -121,4 +125,6 @@ def run_adjudication_pipeline(
         grounded=grounded,
         explanation=final_explanation,
         appeal_letter=appeal_letter,
+        matched_clause=matched_clause,
+        referenced_facts=facts,
     )

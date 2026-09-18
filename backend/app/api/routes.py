@@ -93,13 +93,41 @@ def api_extract_evidence(req: ExtractEvidenceRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from fastapi import APIRouter, HTTPException, File, UploadFile
+import tempfile
+import os
+
+from app.extraction.evidence_extraction import extract_text_from_pdf
+
 @router.post("/readiness/pipeline", response_model=ReadinessResult)
-def api_readiness_pipeline(req: ReadinessPipelineRequest):
+def api_readiness_pipeline(
+    policy: UploadFile = File(...),
+    claims: list[UploadFile] = File(...)
+):
     try:
+        facts = []
+        doc_names = []
+        for claim in claims:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(claim.file.read())
+                tmp_path = tmp.name
+            try:
+                extracted = extract_facts_from_pdf(tmp_path, document_label=claim.filename)
+                facts.extend(extracted)
+                doc_names.append(claim.filename)
+            finally:
+                os.remove(tmp_path)
+                
+        submission = SubmissionEvidence(
+            claim_type="medical",
+            facts=facts,
+            documents_provided=doc_names
+        )
+        
         result = run_readiness_pipeline(
-            submission=req.submission,
-            rule_inputs=req.rule_inputs,
-            required_fields=req.required_fields
+            submission=submission,
+            rule_inputs=[],
+            required_fields=["admission_date", "claim_amount"]
         )
         return result
     except Exception as e:
@@ -141,16 +169,47 @@ def api_draft_appeal(req: DraftAppealRequest):
 
 
 @router.post("/adjudication/pipeline", response_model=ClaimAdvocateResult)
-def api_adjudication_pipeline(req: AdjudicationPipelineRequest):
+def api_adjudication_pipeline(
+    policy: UploadFile = File(...),
+    rejection: UploadFile = File(...)
+):
     try:
+        # Extract clauses from policy
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pol:
+            tmp_pol.write(policy.file.read())
+            tmp_pol_path = tmp_pol.name
+        try:
+            clauses = extract_clauses_from_pdf(tmp_pol_path)
+        finally:
+            os.remove(tmp_pol_path)
+            
+        # Extract facts from rejection
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_rej:
+            tmp_rej.write(rejection.file.read())
+            tmp_rej_path = tmp_rej.name
+        try:
+            facts = extract_facts_from_pdf(tmp_rej_path, document_label=rejection.filename)
+            rej_text_dict = extract_text_from_pdf(tmp_rej_path)
+            stated_reason = " ".join(rej_text_dict.values()).strip()[:1000]
+            if not stated_reason:
+                stated_reason = "See attached rejection letter."
+        finally:
+            os.remove(tmp_rej_path)
+            
+        rejection_record = RejectionRecord(
+            cited_clause_ref=None,
+            stated_reason=stated_reason,
+            claim_facts=facts
+        )
+        
         idx = ClauseEmbeddingIndex()
-        idx.build(req.policy_clauses)
+        idx.build(clauses)
         retriever = HybridRetriever(idx)
 
         result = run_adjudication_pipeline(
-            rejection=req.rejection,
+            rejection=rejection_record,
             retriever=retriever,
-            rule_inputs=req.rule_inputs
+            rule_inputs=[]
         )
         return result
     except Exception as e:
