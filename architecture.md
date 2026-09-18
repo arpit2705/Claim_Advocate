@@ -4,21 +4,44 @@ Track 2 — AI-Powered Financial Journeys | 24-hour hackathon format | Team of 2
 
 ---
 
+## 0. What changed in this revision
+
+A detailed alternative architecture was reviewed and selectively merged in. Adopted:
+deterministic rule engine, contradiction detection, prompt-injection/security handling,
+a fourth verdict (`insufficient_evidence`), hybrid retrieval (exact clause lookup +
+semantic search combined), weighted readiness scoring, a lightweight evidence trace
+embedded directly in pipeline responses, and renaming "confidence" to
+`consistency_score` with an explicit disclaimer that it measures reasoning agreement,
+not probability of correctness. Every component below is now labeled **Python
+(deterministic)** or **LLM (reasoning)** so the split is explicit and defensible.
+
+Deliberately left out: a structured clause-hierarchy/related-clause graph, a fully
+decomposed 10-part validator (collapsed into one focused function), a separate
+`/trace/{id}` endpoint with persistence, and 5-pass self-consistency (kept at 3).
+These added extraction risk or infrastructure without a matching demo payoff or
+judge-question answer — see `plan.md` §0 for the same reasoning applied to scope.
+
+---
+
 ## 1. Project Summary
 
-Claim Advocate is a single reasoning engine applied at two moments in the insurance
-claims journey, matching the track brief's own scope ("understanding policy coverage
-and submitting documents ... to tracking claims and resolving customer queries"):
+Claim Advocate is one policy-grounded reasoning engine used at two moments in the
+insurance claims journey, matching the track brief's own scope:
 
-- **Module A — Pre-Submission Readiness Check.** Before a customer submits a claim,
-  check whether their evidence actually satisfies what the relevant policy clause(s)
-  require, and surface a prioritized fix list.
+- **Module A — Pre-Submission Readiness.** Before submitting a claim, check whether
+  the evidence provided satisfies policy requirements, catch contradictions between
+  documents, and produce a weighted readiness score + prioritized fix list.
 - **Module B — Post-Rejection Adjudication & Appeal.** After a rejection, check
   whether the insurer's stated reason actually holds up against the policy's own
-  wording, and draft the appeal if it doesn't.
+  wording. Produce one of `valid` / `questionable` / `likely_misapplied` /
+  `insufficient_evidence`, and draft a grounded appeal when appropriate.
 
-Both modules share the same Extraction Agent, Clause Embedding Index, and Retrieval
-Layer — this is one engine pointed at two moments, not two separate products.
+Both modules share the same Extraction Agent, Policy Knowledge Layer, Retrieval Layer,
+Deterministic Rule Engine, Contradiction Detector, and Decision Validator. The system
+is decision-support, not a legally binding adjudicator — this is stated in the UI.
+
+Guiding principle, kept from the original design: `LLM → proposed reasoning →
+deterministic validation → final result`. The LLM never gets the final word alone.
 
 ---
 
@@ -26,127 +49,154 @@ Layer — this is one engine pointed at two moments, not two separate products.
 
 ```mermaid
 flowchart TD
-    P[Policy PDF] --> C[Extraction Agent]
-    C --> C1[Structured Policy Clauses]
-    C1 --> D[Clause Embedding Index]
+    P[Policy PDF] --> PE[Policy Extraction - LLM]
+    PE --> PK[Policy Knowledge Layer]
 
-    subgraph ModuleA [Module A: Pre-Submission Readiness]
-        A1[Documents to be Submitted] --> C
-        C --> A2[Structured Evidence Facts]
-        A2 --> E1[Retrieval Layer]
-        D --> E1
-        E1 --> A3[Readiness Engine]
-        A3 --> A4[Grounding Verifier]
-        A4 --> A5[Readiness Score + Fix List]
-    end
+    DOC[Claim Documents / Rejection Letter] --> SEC[Input Sanitizer - Python]
+    SEC --> EE[Evidence Extraction - LLM]
+    EE --> EF[Structured Evidence Facts]
 
-    subgraph ModuleB [Module B: Post-Rejection Adjudication]
-        B1[Rejection Letter] --> C
-        C --> B2[Structured Rejection Data]
-        B2 --> E2[Retrieval Layer]
-        D --> E2
-        E2 --> B3[Adjudication Engine - self-consistency, N passes]
-        B3 --> B4[Grounding Verifier]
-        B4 --> B5{Verdict}
-        B5 -->|Valid| B6[Explanation Generator]
-        B5 -->|Questionable / Misapplied| B7[Appeal Drafting Agent]
-    end
+    EF --> CD[Contradiction Detector - Python]
+    EF --> RE[Deterministic Rule Engine - Python]
+    PK --> RE
 
-    A5 --> K[Results API]
-    B6 --> K
-    B7 --> K
-    K --> L[Frontend Dashboard - two tabs, one engine]
-    A3 --> M[Eval Harness]
-    B3 --> M
+    EF --> HR[Hybrid Retrieval]
+    PK --> HR
+    HR --> HR1[Exact Clause Lookup - Python]
+    HR --> HR2[Semantic Search - Embeddings]
+
+    HR1 --> REASON[Policy-Evidence Reasoner - LLM, 3 passes]
+    HR2 --> REASON
+    RE --> REASON
+    CD --> REASON
+
+    REASON --> CONS[Consistency Analysis - Python]
+    CONS --> VAL[Decision Validator - Python]
+    VAL --> VERDICT{Verdict}
+
+    VERDICT -->|valid| EXP[Explanation Generator - LLM]
+    VERDICT -->|questionable / likely_misapplied| APPEAL[Appeal Generator - LLM, grounded only]
+    VERDICT -->|insufficient_evidence| ABSTAIN[Flag for Human Review]
+
+    EXP --> TRACE[Evidence Trace - embedded in response]
+    APPEAL --> TRACE
+    ABSTAIN --> TRACE
+    VAL --> READY[Readiness Score - Module A, weighted]
+    READY --> TRACE
 ```
 
 ---
 
 ## 3. Component responsibilities
 
-| Component | Responsibility | Key design decision | Shared / Module-specific |
+| Component | Responsibility | Python or LLM | Shared / Module A / Module B |
 |---|---|---|---|
-| Extraction Agent | Converts policy PDF into structured clauses; converts either submitted documents (Module A) or a rejection letter (Module B) into structured facts | Enforced schema (Pydantic), not freeform text — see §4. One agent, two input types | Shared |
-| Clause Embedding Index | Embeds every extracted policy clause, once per case | In-memory vector store is sufficient at this scale | Shared |
-| Retrieval Layer | Finds the true best-matching clause(s) for a given set of facts via semantic similarity | Used both to check evidence sufficiency (Module A) and to verify a cited clause (Module B) | Shared |
-| Grounding Verifier | Confirms every clause ID and quoted text in any output actually exists in the extracted structure | Programmatic check, not another LLM call — deterministic and fast | Shared |
-| Readiness Engine (Module A) | Checks whether submitted evidence satisfies what the matched clause(s) require; flags missing/inconsistent items | Checklist-style reasoning, lighter than adjudication — good fit for the less deep-reasoning-heavy owner | Module A only |
-| Adjudication Engine (Module B) | Reasons over retrieved clause(s) vs. claim facts; runs multiple passes for self-consistency confidence | Confidence from pass agreement, not a single guessed number — this is the core differentiator | Module B only |
-| Explanation Generator (Module B) | Produces a plain-language explanation when a rejection is valid | Also names any other coverage that might still apply | Module B only |
-| Appeal Drafting Agent (Module B) | Generates a formal appeal letter citing only grounded clauses | Template-constrained generation | Module B only |
-| Eval Harness | Runs each module's scenario set end-to-end and reports accuracy | One harness, two scenario sets (A and B) | Shared pattern |
-| Results API | Exposes endpoints per module plus combined pipeline endpoints | FastAPI, structured JSON throughout | Shared |
-| Frontend Dashboard | Two entry points on one page: "Before you submit" (Module A) and "If you're rejected" (Module B) | Same engine, two moments — this is the story the UI should visually tell | Shared shell, module-specific views |
+| Input Sanitizer | Wraps extracted document text in clearly delimited blocks before it reaches any LLM prompt; treats document content as data, never as instructions | Python | Shared |
+| Policy Extraction | Converts policy PDF into structured `Clause` objects | LLM | Shared |
+| Evidence Extraction | Converts claim documents or a rejection letter into structured `EvidenceFact` / `RejectionRecord` objects, with normalized dates/amounts | LLM | Shared |
+| Policy Knowledge Layer | Stores clauses with `clause_id`, type, raw text, trigger conditions, page number, embedding — not one flattened blob | Python (storage) | Shared |
+| Contradiction Detector | Compares normalized structured facts field-by-field (dates, amounts, hospital, identity, policy/claim number) and flags conflicts with neutral language ("inconsistent," not "fraudulent") | Python | Shared |
+| Deterministic Rule Engine | Date/waiting-period/deadline math, monetary limit and sub-limit checks, document-presence checks — anything plain code computes reliably | Python | Shared |
+| Hybrid Retrieval — Exact Lookup | Direct `clause_id` lookup when a rejection cites a specific clause | Python | Module B primarily |
+| Hybrid Retrieval — Semantic Search | Embedding similarity search for conceptually relevant clauses when no exact reference exists, or to surface related coverage | Embeddings (not LLM reasoning) | Shared |
+| Policy-Evidence Reasoner | The one genuinely irreducible reasoning step — interprets whether retrieved clause wording actually covers the claim facts; runs 3 independent passes | LLM | Module B (adjudication) / Module A (ambiguous requirement matching only) |
+| Consistency Analysis | Tallies agreement across the 3 reasoning passes into a `consistency_score` — explicitly NOT a probability of correctness, just agreement rate | Python | Module B |
+| Decision Validator | One focused function checking: cited clause/fact IDs exist, quoted text matches source, deterministic rules satisfied, no unresolved high-severity contradictions, evidence supports the verdict | Python | Shared |
+| Explanation Generator | Plain-language explanation when verdict is `valid`; also names any other coverage that might still apply | LLM | Module B |
+| Appeal Generator | Formal appeal letter — only from clauses/facts that passed the Decision Validator; builds an evidence table before the letter text | LLM (grounded inputs only) | Module B |
+| Readiness Engine | Weighted readiness score (critical requirements weighted higher than optional evidence) + prioritized fix list | Python (scoring) + LLM (ambiguous requirement interpretation) | Module A |
+| Evidence Trace | `verdict → clause_id → fact_id → source document → page`, embedded directly in the pipeline response, not a separate persisted endpoint | Python (assembly) | Shared |
+| Eval Harness | Runs the scenario set through both pipelines, reports real accuracy numbers, labels anything unmeasured as `NOT YET MEASURED` | Python | Shared |
 
 ---
 
-## 4. Data schema (core objects)
+## 4. Data schemas (core objects)
 
 ```python
-# Policy clause (post-extraction) — shared by both modules
+# --- Policy Knowledge Layer ---
 class Clause(BaseModel):
     clause_id: str
     clause_type: Literal["exclusion", "sub_limit", "waiting_period", "condition", "coverage"]
     raw_text: str
     trigger_conditions: list[str]
+    page_number: int | None
 
-# --- Module A: Pre-Submission Readiness ---
+# --- Evidence Layer ---
+class EvidenceFact(BaseModel):
+    fact_id: str
+    field: str                  # e.g. "admission_date", "invoice_amount"
+    value: str                  # normalized (ISO dates, numeric amounts)
+    source_document: str
+    page: int | None
+    confidence: float
 
-class SubmissionEvidence(BaseModel):
-    claim_type: str
-    facts_provided: list[str]
-    documents_provided: list[str]
-    claim_date: str | None
-    policy_inception_date: str | None
+class ContradictionFlag(BaseModel):
+    field: str
+    value_a: str
+    source_a: str
+    value_b: str
+    source_b: str
+    severity: Literal["low", "medium", "high"]
+    note: str                   # neutral language, e.g. "requires verification"
 
-class ReadinessCheck(BaseModel):
-    matched_clause_id: str
-    requirement_met: bool
-    missing_or_inconsistent: list[str]
+class RuleResult(BaseModel):
+    rule_name: str               # e.g. "waiting_period_check"
+    passed: bool
     explanation: str
 
+# --- Module A ---
+class SubmissionEvidence(BaseModel):
+    claim_type: str
+    facts: list[EvidenceFact]
+    documents_provided: list[str]
+
 class ReadinessResult(BaseModel):
-    readiness_score: float          # 0-100, derived from checks passed / total checks
-    checks: list[ReadinessCheck]
-    prioritized_fixes: list[str]    # ordered by impact
+    readiness_score: float       # weighted: critical 50% / required evidence 30% / consistency 15% / supporting 5%
+    rule_results: list[RuleResult]
+    contradictions: list[ContradictionFlag]
+    missing_evidence: list[str]
+    prioritized_fixes: list[str]
     grounded: bool
+    scoring_model_note: str = "Prototype weighted scoring model — not a certified readiness determination."
 
-# --- Module B: Post-Rejection Adjudication ---
-
+# --- Module B ---
 class RejectionRecord(BaseModel):
     cited_clause_ref: str | None
     stated_reason: str
-    claim_facts: list[str]
-    claim_date: str | None
-    policy_inception_date: str | None
+    claim_facts: list[EvidenceFact]
 
 class Verdict(BaseModel):
-    verdict: Literal["valid", "questionable", "likely_misapplied"]
-    confidence: float               # derived from self-consistency agreement
-    matched_clause_id: str
+    verdict: Literal["valid", "questionable", "likely_misapplied", "insufficient_evidence"]
+    consistency_score: float     # agreement across reasoning passes — NOT a probability
+    matched_clause_id: str | None
     mismatch_explanation: str
-    pass_agreement: list[str]       # raw verdicts from each self-consistency pass
+    pass_results: list[str]      # raw verdict from each of the 3 reasoning passes
 
 class ClaimAdvocateResult(BaseModel):
     verdict: Verdict
+    contradictions: list[ContradictionFlag]
+    rule_results: list[RuleResult]
     grounded: bool
     explanation: str
-    appeal_letter: str | None       # populated only if questionable/likely_misapplied
+    appeal_letter: str | None    # only populated if grounded and verdict warrants it
 ```
 
 ---
 
 ## 5. API surface
 
-| Endpoint | Method | Module | Purpose |
-|---|---|---|---|
-| `/extract-policy` | POST | Shared | Extracts structured clauses from a policy PDF |
-| `/readiness/check` | POST | A | Runs retrieval + readiness engine on submission evidence |
-| `/readiness/pipeline` | POST | A | Full Module A flow: policy + documents → readiness result |
-| `/adjudicate` | POST | B | Runs retrieval + adjudication engine on a rejection |
-| `/draft-appeal` | POST | B | Generates appeal letter for a questionable/misapplied verdict |
-| `/adjudication/pipeline` | POST | B | Full Module B flow: policy + rejection letter → result |
-| `/eval/run` | POST | Both | Runs both scenario sets through their respective pipelines, returns accuracy metrics |
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/extract-policy` | POST | Policy PDF → structured `Clause[]` |
+| `/extract-evidence` | POST | Claim documents or rejection letter → `EvidenceFact[]` / `RejectionRecord` |
+| `/readiness/pipeline` | POST | Full Module A flow → `ReadinessResult`, including embedded evidence trace |
+| `/adjudicate` | POST | Retrieval + rule engine + reasoning + validation → `Verdict` |
+| `/draft-appeal` | POST | Grounded `Verdict` → appeal letter (evidence table first, then letter text) |
+| `/adjudication/pipeline` | POST | Full Module B flow → `ClaimAdvocateResult`, including embedded evidence trace |
+| `/eval/run` | POST | Runs both scenario sets, returns real accuracy metrics or `NOT YET MEASURED` |
+
+Evidence trace is returned as a field within the pipeline responses above, not via a
+separate `/trace/{id}` endpoint — no persistence layer needed for this to work.
 
 ---
 
@@ -154,13 +204,13 @@ class ClaimAdvocateResult(BaseModel):
 
 | Layer | Choice | Why |
 |---|---|---|
-| LLM calls | Groq-hosted model via API | Fast inference makes multi-pass self-consistency (Module B) and dual-module load cheap in wall-clock time |
-| Orchestration | LangChain (or plain structured calls — keep it thin) | Familiar, fast to wire up; avoid over-abstracting for a 24-hour build |
-| Embeddings | sentence-transformers (local) or provider embedding endpoint | No need for a hosted vector DB at this scale |
-| Backend | FastAPI | Fast to scaffold, native Pydantic validation matches the schema design |
-| PDF parsing | pdfplumber / PyPDF | Sufficient for structured, machine-generated sample documents |
-| Frontend | React + Vite | Fast dev loop; two-tab layout maps cleanly to two modules |
-| Storage | In-memory / SQLite | No need for a persistent DB in a 24-hour scope |
+| LLM calls | Groq-hosted model via API | Fast inference keeps 3-pass self-consistency and the reduced LLM footprint cheap in wall-clock time |
+| Deterministic logic | Plain Python (dates, thresholds, contradiction comparisons) | No LLM call for anything code computes reliably — faster, cheaper, and a concrete answer to "isn't this just a wrapper?" |
+| Embeddings | sentence-transformers (local) | No hosted vector DB needed at this scale |
+| Backend | FastAPI + Pydantic | Structured validation matches the schema design directly |
+| PDF parsing | pdfplumber | Per-page extraction, needed for page numbers in the evidence trace |
+| Frontend | React + Vite | Two-tab layout, "Why?" trace view as a prominent interaction |
+| Storage | In-memory / SQLite | No persistent DB required — evidence trace is embedded in responses, not stored |
 
 ---
 
@@ -168,11 +218,11 @@ class ClaimAdvocateResult(BaseModel):
 
 | Owner | Builds |
 |---|---|
-| Person 1 | Adjudication Engine, Grounding Verifier, Appeal Drafting Agent (Module B) — kept with one owner so reasoning logic stays coherent |
-| Person 2 | Readiness Engine, fix-list generator (Module A), plus Frontend |
-| Together | Extraction Agent, Clause Embedding Index, Retrieval Layer (shared core, built first, schema locked before splitting) |
+| Person 1 | Policy-Evidence Reasoner, Consistency Analysis, Decision Validator, Appeal Generator (Module B core) |
+| Person 2 | Readiness Engine, Contradiction Detector, Rule Engine application for Module A, Frontend |
+| Together | Extraction Agents, Policy Knowledge Layer, Hybrid Retrieval, Deterministic Rule Engine (shared logic), Input Sanitizer, schema — locked before splitting |
 
 ---
 
-*See `plan.md` for the feature feasibility breakdown, two-person phase-by-phase build
-schedule, and risk register.*
+*See `plan.md` for the feature feasibility breakdown, phase-by-phase build schedule,
+and risk register.*
