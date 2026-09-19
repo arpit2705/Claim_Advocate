@@ -16,6 +16,10 @@ from app.schemas.readiness import ReadinessResult
 from app.rules.contradiction_detector import detect_contradictions
 from app.rules.rule_engine import run_all_rules
 
+WEIGHT_CRITICAL = 50.0
+WEIGHT_EVIDENCE = 30.0
+WEIGHT_CONSISTENCY = 15.0
+WEIGHT_SUPPORTING = 5.0
 
 def run_readiness_pipeline(
     submission: SubmissionEvidence,
@@ -24,20 +28,6 @@ def run_readiness_pipeline(
 ) -> ReadinessResult:
     """
     Evaluates claim readiness prior to submission.
-
-    Parameters
-    ----------
-    submission : SubmissionEvidence
-        The extracted facts and provided documents.
-    rule_inputs : list[dict], optional
-        Deterministic rules to check (e.g., deadline, waiting period).
-    required_fields : list[str], optional
-        Expected fields that must be present (e.g., ["admission_date", "claim_amount"]).
-
-    Returns
-    -------
-    ReadinessResult
-        The scored readiness result and fixes.
     """
     rule_inputs = rule_inputs or []
     required_fields = required_fields or []
@@ -56,23 +46,23 @@ def run_readiness_pipeline(
             missing.append(req)
             fixes.append(f"Missing required information: {req}")
 
-    # Evaluate Rules (Critical - 50%)
-    critical_score = 50.0
+    # Evaluate Rules (Critical)
+    critical_score = WEIGHT_CRITICAL
     for r in rule_results:
         if not r.passed:
-            critical_score -= (50.0 / max(1, len(rule_results)))
+            critical_score -= (WEIGHT_CRITICAL / max(1, len(rule_results)))
             fixes.append(f"Rule failed ({r.rule_name}): {r.explanation}")
     critical_score = max(0.0, critical_score)
 
-    # Evaluate Evidence Completeness (Required - 30%)
-    evidence_score = 30.0
+    # Evaluate Evidence Completeness (Required)
+    evidence_score = WEIGHT_EVIDENCE
     if required_fields:
-        penalty = (len(missing) / len(required_fields)) * 30.0
+        penalty = (len(missing) / len(required_fields)) * WEIGHT_EVIDENCE
         evidence_score -= penalty
     evidence_score = max(0.0, evidence_score)
 
-    # Evaluate Consistency (Consistency - 15%)
-    consistency_score = 15.0
+    # Evaluate Consistency (Consistency)
+    consistency_score = WEIGHT_CONSISTENCY
     for c in contradictions:
         if c.severity == "high":
             consistency_score -= 10.0
@@ -84,11 +74,11 @@ def run_readiness_pipeline(
             consistency_score -= 1.0
     consistency_score = max(0.0, consistency_score)
 
-    # Evaluate Confidence (Supporting - 5%)
+    # Evaluate Confidence (Supporting)
     supporting_score = 0.0
     if facts:
         avg_conf = sum(f.confidence for f in facts) / len(facts)
-        supporting_score = avg_conf * 5.0
+        supporting_score = avg_conf * WEIGHT_SUPPORTING
 
     total_score = critical_score + evidence_score + consistency_score + supporting_score
     grounded = len(facts) > 0

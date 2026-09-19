@@ -98,19 +98,27 @@ def generate_explanation(
         documents={"verdict_context": context},
     )
 
-    response = _client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
+    import logging
+    _log = logging.getLogger(__name__)
 
-    raw = response.choices[0].message.content or "{}"
-    try:
-        parsed = json.loads(raw)
-        return parsed.get("explanation", verdict.mismatch_explanation)
-    except json.JSONDecodeError:
-        return verdict.mismatch_explanation
+    for attempt in range(2):
+        response = _client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content or "{}"
+        try:
+            parsed = json.loads(raw)
+            if "explanation" in parsed and parsed["explanation"]:
+                return parsed["explanation"]
+        except json.JSONDecodeError:
+            _log.warning("Explanation generation JSON parse failed (attempt %d). Raw output: %s", attempt + 1, raw)
+            continue
+            
+    return f"Error: Explanation generation failed, please retry. (Technical details: {verdict.mismatch_explanation})"

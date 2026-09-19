@@ -22,3 +22,4 @@ class ClaimAdvocateResult(BaseModel):
     appeal_letter: str | None
     matched_clause: Optional[Clause] = None
     referenced_facts: list[EvidenceFact] = Field(default_factory=list)
+    insurer_stated_reason: str | None = None

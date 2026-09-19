@@ -127,6 +127,29 @@ def validate_verdict(
 
     mismatch_explanation = override_reason or proposed_mismatch_explanation
 
+    # ── Safety net: guarantee mismatch_explanation is always a non-empty string ──
+    # If both override_reason and proposed_mismatch_explanation are falsy (None/""),
+    # the Verdict Pydantic model would crash. Log and fill a safe fallback here.
+    if not mismatch_explanation:
+        import logging
+        _log = logging.getLogger(__name__)
+        if final_verdict == "valid":
+            mismatch_explanation = (
+                "No mismatch identified — the cited clause's wording is consistent "
+                "with the claim facts, and the rejection is supported."
+            )
+        else:
+            mismatch_explanation = (
+                f"Verdict '{final_verdict}' reached but no detailed explanation was "
+                "captured. Review the policy clause and claim facts for details."
+            )
+        _log.warning(
+            "mismatch_explanation was empty for verdict '%s'. "
+            "Filled with safety-net fallback: '%s'",
+            final_verdict,
+            mismatch_explanation,
+        )
+
     return Verdict(
         verdict=final_verdict,
         consistency_score=consistency_score,

@@ -34,6 +34,11 @@ def tally_consistency(pass_results: list[dict[str, Any]]) -> tuple[str, float, l
     verdicts = [p.get("verdict", "insufficient_evidence") for p in pass_results]
     counts = Counter(verdicts)
     plurality_verdict, plurality_count = counts.most_common(1)[0]
+    
+    # Abstention logic: if there is no agreement at all (3-way tie), default to insufficient_evidence
+    if plurality_count == 1 and len(pass_results) > 1:
+        plurality_verdict = "insufficient_evidence"
+
     consistency_score = plurality_count / len(pass_results)
 
     return plurality_verdict, consistency_score, verdicts

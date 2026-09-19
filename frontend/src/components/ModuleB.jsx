@@ -137,7 +137,7 @@ export default function ModuleB() {
             <ClauseComparison 
               matchedClauseId={result.verdict.matched_clause_id}
               matchedClauseText={result.matched_clause?.raw_text || "Clause text not found."}
-              insurerReason="Your claim is denied based on the provided rejection letter." 
+              insurerReason={result.insurer_stated_reason || "Your claim is denied based on the provided rejection letter."} 
               mismatchExplanation={result.verdict.mismatch_explanation}
             />
             
@@ -167,11 +167,18 @@ export default function ModuleB() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3281B7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               Policy Rules Checked
             </h3>
-            <div className="grid md:grid-cols-2 gap-4">
-              {result.rule_results.map((rule, i) => (
-                <RequirementCheck key={i} rule={rule} index={i} />
-              ))}
-            </div>
+            {result.rule_results && result.rule_results.length > 0 ? (
+              <div className="grid md:grid-cols-2 gap-4">
+                {result.rule_results.map((rule, i) => (
+                  <RequirementCheck key={i} rule={rule} index={i} />
+                ))}
+              </div>
+            ) : (
+              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 text-gray-600 flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span className="font-medium text-sm">No deterministic rule checks applicable to this claim.</span>
+              </div>
+            )}
           </div>
           
           {!result.grounded && (

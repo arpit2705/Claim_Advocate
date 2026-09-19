@@ -42,7 +42,10 @@ Return a JSON object with exactly these fields:
     * "insufficient_evidence": facts are too incomplete to determine either way
   - explanation: 2-4 sentence reasoning citing specific clause language and facts
   - matched_clause_id: the clause_id most relevant to this rejection (or null)
-  - mismatch_explanation: if verdict is not "valid", explain the specific mismatch
+  - mismatch_explanation: always provide a non-empty string. For "valid", explain why
+    the clause supports the rejection (e.g. "No mismatch identified — the cited clause's
+    wording is consistent with the claim facts, and the rejection is supported.").
+    For all other verdicts, explain the specific mismatch or gap found.
 
 Return only the JSON object. No prose outside it.
 """.strip()
@@ -93,7 +96,18 @@ def _single_pass(
     parsed["verdict"] = verdict
     parsed.setdefault("explanation", "")
     parsed.setdefault("matched_clause_id", None)
-    parsed.setdefault("mismatch_explanation", "")
+    # setdefault only fills missing keys — if LLM returned null explicitly, fix it here
+    if not parsed.get("mismatch_explanation"):
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.warning("LLM omitted mismatch_explanation. Falling back to default string.")
+        if parsed.get("verdict") == "valid":
+            parsed["mismatch_explanation"] = (
+                "No mismatch identified — the cited clause's wording is consistent "
+                "with the claim facts, and the rejection is supported."
+            )
+        else:
+            parsed["mismatch_explanation"] = "No detailed mismatch explanation was provided."
     return parsed
 
 

@@ -53,7 +53,7 @@ export default function VerdictBadge({ verdict, consistencyScore }) {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm">Consistency Score:</span>
             <span className="bg-white/50 px-2 py-0.5 rounded text-sm font-bold border border-black/10">
-              {consistencyScore}/3
+              {Math.round(consistencyScore * 3)}/3
             </span>
           </div>
           <p className="text-xs">Measures agreement between reasoning passes, not probability of correctness.</p>

@@ -41,9 +41,8 @@ Write a formal, factual appeal letter that:
 Return a JSON object with one key: "appeal_letter" (string containing the full letter).
 """.strip()
 
-# Matches clause IDs like CL-001, CL-12, clause_2, etc.
-_CLAUSE_ID_RE = re.compile(r"\bCL-\d+\b", re.IGNORECASE)
-
+# Matches clause IDs like CL-001, Clause 4.2, Section 4.2(b)
+_CLAUSE_ID_RE = re.compile(r"\b(?:CL-\d+|Clause\s+[\d.a-zA-Z()]+|Section\s+[\d.a-zA-Z()]+)\b", re.IGNORECASE)
 
 def _extract_cited_clause_ids(text: str) -> set[str]:
     """Extracts all clause_id references from generated text."""
@@ -114,25 +113,31 @@ def generate_appeal(
         documents={"appeal_context": context},
     )
 
-    response = _client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.1,
-        response_format={"type": "json_object"},
-    )
+    import logging
+    _log = logging.getLogger(__name__)
 
-    raw = response.choices[0].message.content or "{}"
-    try:
-        parsed = json.loads(raw)
-        letter = parsed.get("appeal_letter", "")
-    except json.JSONDecodeError:
-        return None
+    for attempt in range(2):
+        response = _client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
 
-    if not letter:
-        return None
+        raw = response.choices[0].message.content or "{}"
+        try:
+            parsed = json.loads(raw)
+            letter = parsed.get("appeal_letter", "")
+            if letter:
+                break
+        except json.JSONDecodeError:
+            _log.warning("Appeal generation JSON parse failed (attempt %d). Raw output: %s", attempt + 1, raw)
+            continue
+    else:
+        return "Error: Appeal generation failed, please retry."
 
     # Python citation validation: remove any hallucinated clause IDs
     cited_ids = _extract_cited_clause_ids(letter)

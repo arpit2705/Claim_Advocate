@@ -119,20 +119,87 @@ def api_readiness_pipeline(
                 os.remove(tmp_path)
                 
         submission = SubmissionEvidence(
+            # KNOWN SCOPE LIMITATION: For this hackathon, we only process medical claims.
             claim_type="medical",
             facts=facts,
             documents_provided=doc_names
         )
         
-        from datetime import date
+        # Extract clauses from policy
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pol:
+            tmp_pol.write(policy.file.read())
+            tmp_pol_path = tmp_pol.name
+        try:
+            clauses = extract_clauses_from_pdf(tmp_pol_path)
+        finally:
+            os.remove(tmp_pol_path)
+
+        # Build dynamic rule inputs
+        from datetime import date, datetime
+        import re
+
+        def parse_date(d_str: str) -> date | None:
+            if not d_str: return None
+            try:
+                return datetime.strptime(d_str, "%Y-%m-%d").date()
+            except ValueError:
+                return None
+
+        fact_dict = {f.field.lower(): f.value for f in facts}
+        admission_date = parse_date(fact_dict.get("admission_date"))
+        
+        claim_amount_str = fact_dict.get("claim_amount")
+        if claim_amount_str:
+            try:
+                claim_amount = float(re.sub(r'[^\d.]', '', claim_amount_str))
+            except ValueError:
+                claim_amount = None
+        else:
+            claim_amount = None
+
+        policy_start = parse_date(fact_dict.get("policy_start_date")) or date(2023, 1, 1)
+        policy_end = parse_date(fact_dict.get("policy_end_date")) or date(2024, 12, 31)
+        submission_date = parse_date(fact_dict.get("submission_date")) or date.today()
+
+        dynamic_rule_inputs = []
+        
+        for c in clauses:
+            if c.clause_type == "waiting_period" and admission_date:
+                m = re.search(r'(\d+)\s*day', c.raw_text, re.IGNORECASE)
+                days = int(m.group(1)) if m else 30
+                dynamic_rule_inputs.append({
+                    "rule": "waiting_period",
+                    "policy_start_date": policy_start,
+                    "incident_date": admission_date,
+                    "waiting_period_days": days
+                })
+            elif c.clause_type == "sub_limit" and claim_amount is not None:
+                m = re.search(r'(?:Rs\.?|INR|₹)?\s*([\d,]+)', c.raw_text, re.IGNORECASE)
+                amount = float(m.group(1).replace(',', '')) if m else 100000.0
+                dynamic_rule_inputs.append({
+                    "rule": "sub_limit",
+                    "claimed_amount": claim_amount,
+                    "sub_limit_amount": amount,
+                    "benefit_name": "Hospitalization"
+                })
+
+        if admission_date:
+            dynamic_rule_inputs.append({
+                "rule": "deadline",
+                "incident_date": admission_date,
+                "submission_date": submission_date,
+                "deadline_days": 90
+            })
+            dynamic_rule_inputs.append({
+                "rule": "coverage_period",
+                "policy_start_date": policy_start,
+                "policy_end_date": policy_end,
+                "incident_date": admission_date
+            })
+
         result = run_readiness_pipeline(
             submission=submission,
-            rule_inputs=[
-                {"rule": "waiting_period", "policy_start_date": date(2023, 1, 1), "incident_date": date(2024, 5, 1), "waiting_period_days": 30},
-                {"rule": "sub_limit", "claimed_amount": 50000, "sub_limit_amount": 100000, "benefit_name": "Hospitalization"},
-                {"rule": "deadline", "incident_date": date(2024, 5, 1), "submission_date": date(2024, 5, 15), "deadline_days": 90},
-                {"rule": "coverage_period", "policy_start_date": date(2023, 1, 1), "policy_end_date": date(2024, 12, 31), "incident_date": date(2024, 5, 1)}
-            ],
+            rule_inputs=dynamic_rule_inputs,
             required_fields=["admission_date", "claim_amount"]
         )
         return result

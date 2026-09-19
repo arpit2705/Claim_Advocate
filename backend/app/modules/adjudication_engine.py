@@ -127,4 +127,5 @@ def run_adjudication_pipeline(
         appeal_letter=appeal_letter,
         matched_clause=matched_clause,
         referenced_facts=facts,
+        insurer_stated_reason=rejection.stated_reason,
     )
