@@ -28,19 +28,49 @@ from app.schemas.evidence import EvidenceFact
 _client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 _EXTRACTION_INSTRUCTION = """
-You are a claim document analysis assistant. Extract ALL factual fields from the
-documents below. For each fact return a JSON object with exactly these fields:
-  - fact_id: string (e.g. "F-001", "F-002", ...)
-  - field: the canonical name of the fact field. You MUST use one of these exact names if applicable:
-           admission_date, discharge_date, claim_amount, diagnosis, treatment_type,
-           policy_number, patient_name, hospital_name, previous_treatment_date.
-           Do not invent alternate field names like "total_billed_amount" or "claim_amount_requested".
-  - value: the raw value as it appears in the document
-  - source_document: the document label provided
-  - page: integer page number where found (null if unknown)
-  - confidence: float 0.0–1.0 reflecting how clearly this fact appears
+You are a claim document analysis assistant. Analyze the provided CLAIM DOCUMENT.
 
-Return a JSON array of fact objects. No prose outside the JSON.
+Step 1: Classify the document.
+Determine its type from this exact list: claim_form, discharge_summary, hospital_bill, payment_receipt, prescription, investigation_report, identity_proof, other.
+Also provide a confidence score (0.0 to 1.0).
+
+Step 2: Extract factual fields.
+Extract facts into a flat object. Use null for unavailable fields. Do not fabricate values.
+Expected fields:
+  - policy_number: string
+  - patient_name: string
+  - claimant_name: string
+  - admission_date: string (YYYY-MM-DD)
+  - discharge_date: string (YYYY-MM-DD)
+  - hospital_name: string (core hospital name only)
+  - hospital_department: string
+  - doctor_name: string
+  - doctor_qualifications: array of strings
+  - core_illness: string
+  - illness_modifiers: array of strings
+  - medical_procedure: string
+  - billing_items: array of strings
+  - claim_amount: number
+  - room_rent_per_day: number
+  - room_rent_quantity_days: integer
+  - room_rent_total: number
+  - claim_intimation_date: string (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
+  - claim_submission_date: string (YYYY-MM-DD)
+  - treatment_type: string (e.g., 'emergency', 'planned')
+
+Return exactly ONE JSON object matching this structure:
+{
+  "document_classification": {
+    "document_type": "...",
+    "confidence": 0.95
+  },
+  "facts": {
+    "policy_number": null,
+    "patient_name": "...",
+    ...
+  }
+}
+Do not return an array at the root level. Do not return markdown. Do not return explanatory text.
 """.strip()
 
 # ── Date normalization ────────────────────────────────────────────────────────
@@ -109,12 +139,12 @@ _AMOUNT_RE = re.compile(
 _DATE_FIELDS = {
     "admission_date", "discharge_date", "claim_date", "incident_date",
     "treatment_date", "surgery_date", "policy_start_date", "policy_end_date",
-    "date_of_birth", "dob", "date", "from_date", "to_date",
+    "date_of_birth", "dob", "date", "from_date", "to_date", "claim_submission_date"
 }
 _AMOUNT_FIELDS = {
-    "claim_amount", "approved_amount", "billed_amount", "paid_amount",
+    "claim_amount", "room_rent_per_day", "room_rent_total", "approved_amount", "billed_amount", "paid_amount",
     "deductible", "copay", "premium", "sub_limit_amount", "amount",
-    "total_amount", "net_amount",
+    "total_amount", "net_amount", "sum_insured"
 }
 
 
@@ -154,8 +184,8 @@ def extract_text_from_pdf(pdf_path: str) -> dict[str, str]:
 
 # ── LLM + validation ─────────────────────────────────────────────────────────
 
-def _call_llm(documents: dict[str, str]) -> list[dict[str, Any]]:
-    """Calls Groq LLM and returns raw parsed JSON list of fact dicts."""
+def _call_llm(documents: dict[str, str]) -> dict[str, Any]:
+    """Calls Groq LLM and returns raw parsed JSON dict for the document."""
     system_prompt, user_prompt = build_safe_prompt(
         task_instruction=_EXTRACTION_INSTRUCTION,
         documents=documents,
@@ -169,45 +199,74 @@ def _call_llm(documents: dict[str, str]) -> list[dict[str, Any]]:
         temperature=0.0,
         response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content or "[]"
-    parsed = json.loads(raw)
-    if isinstance(parsed, dict):
-        for v in parsed.values():
-            if isinstance(v, list):
-                return v
-        return []
-    if isinstance(parsed, list):
-        return parsed
-    return []
+    raw = response.choices[0].message.content or "{}"
+    
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("Evidence extraction failed: LLM returned invalid JSON.")
+        
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Evidence extraction failed: Expected JSON object, received {type(parsed).__name__}.")
+        
+    return parsed
 
+
+_POLICY_ONLY_FIELDS = {"sum_insured", "policy_start_date", "policy_end_date"}
 
 from app.extraction.field_normalization import normalize_field_name
 
-def _build_facts(raw_facts: list[dict[str, Any]], source_label: str) -> list[EvidenceFact]:
-    """Validates and normalizes raw LLM fact dicts into EvidenceFact objects."""
-    print("--- DEBUG: Extracted facts from LLM ---")
-    for item in raw_facts:
-        print(f"DEBUG - field: '{item.get('field')}', value: '{item.get('value')}'")
-    print("---------------------------------------")
+def _build_facts(raw_obj: dict[str, Any], source_label: str) -> tuple[str, list[EvidenceFact]]:
+    """Validates and normalizes raw LLM output into (document_type, list[EvidenceFact])."""
+    import logging
+    _log = logging.getLogger(__name__)
     facts: list[EvidenceFact] = []
-    for idx, item in enumerate(raw_facts):
-        raw_field = str(item.get("field", "unknown")).strip()
+    
+    classification = raw_obj.get("document_classification", {})
+    doc_type = classification.get("document_type", "other")
+    
+    raw_facts = raw_obj.get("facts", {})
+    if not isinstance(raw_facts, dict):
+        raw_facts = {}
+
+    idx = 1
+    for raw_field, raw_value in raw_facts.items():
+        if raw_value is None or str(raw_value).strip() == "":
+            continue
+            
         field = normalize_field_name(raw_field)
-        raw_value = str(item.get("value", "")).strip()
-        value = normalize_value(field, raw_value)
+        raw_value_str = str(raw_value).strip()
 
-        fact_id = item.get("fact_id") or f"F-{idx + 1:03d}"
-        source_document = item.get("source_document") or source_label
+        # STEP 2: Drop policy-only fields that LLM may mistakenly extract from claim docs
+        if field.lower() in _POLICY_ONLY_FIELDS:
+            _log.warning(
+                f"Dropping field '{field}' from claim extraction — this is a policy-only field "
+                f"(source: {source_label}). Raw value was: '{raw_value_str}'"
+            )
+            continue
 
-        page = item.get("page")
-        if page is not None:
+        value = normalize_value(field, raw_value_str)
+
+        # STEP 3: Numeric validation gate — reject non-numeric values for amount fields
+        if field.lower() in _AMOUNT_FIELDS:
+            # After normalization, value must be a clean number string
             try:
-                page = int(page)
-            except (ValueError, TypeError):
-                page = None
+                float(value.replace(",", ""))
+            except (ValueError, AttributeError):
+                _log.warning(
+                    f"Dropping non-numeric amount field '{field}' = '{raw_value_str}' "
+                    f"(normalized to '{value}') from {source_label} — not a usable number."
+                )
+                continue
 
-        confidence = float(item.get("confidence", 0.8))
-        confidence = max(0.0, min(1.0, confidence))
+        fact_id = f"F-{idx:03d}"
+        idx += 1
+        
+        # We always use the assigned document type for the source_document
+        source_document = doc_type
+
+        # We assume high confidence for now as Groq doesn't provide per-field confidence in this schema
+        confidence = 0.9
 
         facts.append(
             EvidenceFact(
@@ -215,18 +274,18 @@ def _build_facts(raw_facts: list[dict[str, Any]], source_label: str) -> list[Evi
                 field=field,
                 value=value,
                 source_document=source_document,
-                page=page,
+                page=None,
                 confidence=confidence,
             )
         )
-    return facts
+    return doc_type, facts
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Public API ───────────────────────────────────────────────────────────────
 
-def extract_facts_from_pdf(pdf_path: str, document_label: str | None = None) -> list[EvidenceFact]:
+def extract_facts_from_pdf(pdf_path: str, document_label: str | None = None) -> tuple[str, list[EvidenceFact]]:
     """
-    Extracts EvidenceFact objects from a claim document PDF.
+    Extracts document type and EvidenceFact objects from a claim document PDF.
 
     Parameters
     ----------
@@ -238,8 +297,8 @@ def extract_facts_from_pdf(pdf_path: str, document_label: str | None = None) -> 
 
     Returns
     -------
-    list[EvidenceFact]
-        Normalized and validated facts.
+    tuple[str, list[EvidenceFact]]
+        (document_type, list of normalized facts).
     """
     if _client is None:
         raise RuntimeError("GROQ_API_KEY is not set.")
@@ -250,13 +309,15 @@ def extract_facts_from_pdf(pdf_path: str, document_label: str | None = None) -> 
     full_text = "\n\n".join(
         f"[Page {k.split('_')[1]}]\n{v}" for k, v in page_texts.items() if v.strip()
     )
-    raw_facts = _call_llm({label: full_text})
-    return _build_facts(raw_facts, label)
+    if not full_text.strip():
+        raise ValueError("PDF text extraction returned empty content (possibly an image-only PDF requiring OCR or an invalid file).")
+    raw_obj = _call_llm({label: full_text})
+    return _build_facts(raw_obj, label)
 
 
 def extract_facts_from_text(
     text: str, document_label: str = "document"
-) -> list[EvidenceFact]:
+) -> tuple[str, list[EvidenceFact]]:
     """
     Extracts EvidenceFact objects from raw text (no PDF needed).
     Useful for tests or when text is already extracted.
@@ -264,28 +325,19 @@ def extract_facts_from_text(
     if _client is None:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    raw_facts = _call_llm({document_label: text})
-    return _build_facts(raw_facts, document_label)
+    raw_obj = _call_llm({document_label: text})
+    return _build_facts(raw_obj, document_label)
 
 
 def extract_facts_from_texts(
     documents: dict[str, str]
-) -> list[EvidenceFact]:
+) -> tuple[str, list[EvidenceFact]]:
     """
     Extracts EvidenceFact objects from multiple named text blocks in one LLM call.
-
-    Parameters
-    ----------
-    documents : dict[str, str]
-        Mapping of document_label -> text.
-
-    Returns
-    -------
-    list[EvidenceFact]
-        Combined normalized facts from all documents.
+    Note: For true multi-document handling, this should ideally be called per document.
     """
     if _client is None:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    raw_facts = _call_llm(documents)
-    return _build_facts(raw_facts, "multi_document")
+    raw_obj = _call_llm(documents)
+    return _build_facts(raw_obj, "multi_document")

@@ -126,7 +126,7 @@ export default function ModuleA() {
               </button>
             </div>
             <div className="shrink-0 flex justify-center w-full md:w-auto">
-              <ReadinessScore score={result.readiness_score} grounded={result.grounded} />
+              <ReadinessScore score={result.readiness_score} verification_status={result.verification_status} />
             </div>
           </div>
 
@@ -143,6 +143,52 @@ export default function ModuleA() {
               </div>
             </div>
           )}
+          
+          <div>
+            <h3 className="text-xl font-bold text-navy mb-4 flex items-center gap-2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              Document Inventory
+            </h3>
+            <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6">
+              <h4 className="text-xs font-bold text-gray-500 tracking-widest uppercase mb-4">Documents Required</h4>
+              <ul className="space-y-3">
+                {result.detected_documents && result.detected_documents.map((doc, i) => (
+                  <li key={`det-${i}`} className="flex flex-col gap-1 text-sm text-gray-800 capitalize">
+                    <div className="flex items-center gap-3 font-medium">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+                      {doc.replace(/_/g, ' ')}
+                    </div>
+                  </li>
+                ))}
+                {result.missing_documents && result.missing_documents.map((doc, i) => (
+                  <li key={`mis-${i}`} className="flex flex-col gap-1 text-sm text-amber-700 capitalize">
+                    <div className="flex items-center gap-3 font-medium">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                      {doc.replace(/_/g, ' ')}
+                    </div>
+                  </li>
+                ))}
+                {result.document_statuses && result.document_statuses.filter(s => s.status === 'PROCESSING_FAILED' || s.status === 'UNREADABLE').map((s, i) => {
+                   const docName = (s.filename || 'Unknown Document').replace(/\.pdf$/i, '').replace(/_/g, ' ');
+                   return (
+                    <li key={`fail-${i}`} className="flex flex-col gap-1 text-sm">
+                      <div className="flex items-center gap-3 font-medium text-red-700 capitalize">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                        {docName}
+                      </div>
+                      <div className="ml-7 text-xs text-red-600">
+                        <span className="font-semibold block">Status: Unable to verify</span>
+                        <span>Message: {s.message}</span>
+                      </div>
+                    </li>
+                   );
+                })}
+                {(!result.detected_documents?.length && !result.missing_documents?.length && (!result.document_statuses || !result.document_statuses.some(s => s.status !== 'PROCESSED'))) && (
+                  <li className="text-sm text-gray-500 italic">No document requirements found.</li>
+                )}
+              </ul>
+            </div>
+          </div>
 
           <div>
             <h3 className="text-xl font-bold text-navy mb-4 flex items-center gap-2">
@@ -170,21 +216,53 @@ export default function ModuleA() {
             </h3>
             {result.contradictions && result.contradictions.length > 0 ? (
               <div className="space-y-4">
-                {result.contradictions.map((contra, i) => (
-                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
-                    <p className="font-semibold text-amber-900 mb-2">{contra.note}</p>
-                    <div className="grid md:grid-cols-2 gap-4 text-sm mt-3">
-                      <div className="bg-white/60 p-3 rounded-lg border border-amber-100">
-                        <span className="text-xs text-amber-600/70 font-bold uppercase block mb-1">{contra.source_a}</span>
-                        <span className="font-medium">{contra.field}: {contra.value_a}</span>
+                {result.contradictions.map((contra, i) => {
+                  // Make the field human-readable
+                  const fieldName = contra.field === 'chronology' 
+                    ? 'Date conflict detected' 
+                    : contra.field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) + ' mismatch';
+                  
+                  // Hide ugly filenames like "claim_form_contradictory.pdf"
+                  const cleanSource = (src) => {
+                     const lower = src.toLowerCase();
+                     if (lower.includes('claim')) return 'Claim Form';
+                     if (lower.includes('discharge')) return 'Discharge Summary';
+                     if (lower.includes('bill')) return 'Hospital Bill';
+                     return src.replace(/_/g, ' ').replace(/\.pdf|\.png|\.jpg/gi, '');
+                  };
+                  
+                  return (
+                    <div key={i} className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <h4 className="font-bold text-amber-900">{fieldName}</h4>
                       </div>
-                      <div className="bg-white/60 p-3 rounded-lg border border-amber-100">
-                        <span className="text-xs text-amber-600/70 font-bold uppercase block mb-1">{contra.source_b}</span>
-                        <span className="font-medium">{contra.field}: {contra.value_b}</span>
-                      </div>
+                      
+                      <p className="text-amber-800 text-sm mb-4">{contra.note}</p>
+                      
+                      <details className="group">
+                        <summary className="text-xs font-semibold text-amber-700 hover:text-amber-900 cursor-pointer flex items-center gap-1 transition-colors select-none">
+                          View details
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transform group-open:rotate-180 transition-transform"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+                        <div className="mt-3 bg-white/60 p-4 rounded-xl border border-amber-100 grid md:grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-xs text-amber-600/70 font-bold uppercase block mb-1">
+                              {contra.field === 'chronology' ? 'Admission' : `Source: ${cleanSource(contra.source_a)}`}
+                            </span>
+                            <span className="font-medium text-amber-900">{contra.value_a}</span>
+                          </div>
+                          <div>
+                            <span className="text-xs text-amber-600/70 font-bold uppercase block mb-1">
+                              {contra.field === 'chronology' ? 'Discharge' : `Source: ${cleanSource(contra.source_b)}`}
+                            </span>
+                            <span className="font-medium text-amber-900">{contra.value_b}</span>
+                          </div>
+                        </div>
+                      </details>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-green-800 flex items-center gap-3">
@@ -198,7 +276,7 @@ export default function ModuleA() {
             <div>
               <h3 className="text-xl font-bold text-navy mb-4 flex items-center gap-2">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-                Missing Evidence
+                Missing Individual Fields
               </h3>
               <ul className="bg-gray-50 border border-gray-200 rounded-2xl p-6 space-y-3">
                 {result.missing_evidence.map((item, i) => (

@@ -37,60 +37,100 @@ def run_readiness_pipeline(
     contradictions = detect_contradictions(facts)
 
     fixes = []
-    missing = []
+    missing_evidence = []
     
+    # ── Document Inventory ──
+    # Map from standard names to known files uploaded
+    expected_docs = ["claim_form", "discharge_summary", "hospital_bill", "prescription", "investigation_report", "identity_proof"]
+    detected_docs_set = set()
+    for doc in submission.documents_provided:
+        lower_doc = doc.lower()
+        for exp in expected_docs:
+            if exp.replace("_", " ") in lower_doc or exp in lower_doc:
+                detected_docs_set.add(exp)
+        # generic catch-all for unknown docs
+        detected_docs_set.add(doc)
+
+    missing_docs = [d for d in expected_docs if d not in detected_docs_set]
+    detected_docs_list = list(detected_docs_set)
+    
+    for md in missing_docs:
+        fixes.append(f"Missing required document: {md.replace('_', ' ').capitalize()}")
+
     # Check required fields
     extracted_fields = {f.field.lower() for f in facts}
     for req in required_fields:
         if req.lower() not in extracted_fields:
-            missing.append(req)
-            fixes.append(f"Missing required information: {req}")
+            missing_evidence.append(req)
 
-    # Evaluate Rules (Critical)
-    critical_score = WEIGHT_CRITICAL
+    # ── Score Breakdown ──
+    score_breakdown = []
+    total_score = 0.0
+    
+    # We assign 20 points per check if it passes.
+    # We have 4 rule checks.
+    base_weight = 20.0
     for r in rule_results:
-        if not r.passed:
-            critical_score -= (WEIGHT_CRITICAL / max(1, len(rule_results)))
+        if r.status == "PASS":
+            contribution = base_weight
+        elif r.status == "PARTIAL":
+            contribution = base_weight / 2.0
+        else:
+            contribution = 0.0
+            
+        score_breakdown.append({
+            "check": r.rule_name,
+            "status": r.status,
+            "weight": base_weight,
+            "contribution": contribution,
+            "reason": r.explanation if r.status != "PASS" else None
+        })
+        total_score += contribution
+        
+        if r.status == "FAIL":
             fixes.append(f"Rule failed ({r.rule_name}): {r.explanation}")
-    critical_score = max(0.0, critical_score)
 
-    # Evaluate Evidence Completeness (Required)
-    evidence_score = WEIGHT_EVIDENCE
-    if required_fields:
-        penalty = (len(missing) / len(required_fields)) * WEIGHT_EVIDENCE
-        evidence_score -= penalty
-    evidence_score = max(0.0, evidence_score)
+    # Give 20 points for document completeness
+    doc_contribution = 20.0 if not missing_docs else max(0, 20.0 - (len(missing_docs) * 5))
+    score_breakdown.append({
+        "check": "document_completeness",
+        "status": "PASS" if not missing_docs else "PARTIAL",
+        "weight": 20.0,
+        "contribution": doc_contribution,
+        "reason": f"Missing {len(missing_docs)} required documents" if missing_docs else None
+    })
+    total_score += doc_contribution
 
-    # Evaluate Consistency (Consistency)
-    consistency_score = WEIGHT_CONSISTENCY
+    # ── Consistency & Verification Status ──
+    has_high_severity_contradiction = False
     for c in contradictions:
         if c.severity == "high":
-            consistency_score -= 10.0
-            fixes.insert(0, f"Critical contradiction in {c.field}: {c.value_a} vs {c.value_b}")
-        elif c.severity == "medium":
-            consistency_score -= 5.0
-            fixes.append(f"Contradiction in {c.field}: {c.value_a} vs {c.value_b}")
+            has_high_severity_contradiction = True
+            fixes.append(f"CRITICAL: Contradiction in {c.field}: {c.value_a} vs {c.value_b}")
         else:
-            consistency_score -= 1.0
-    consistency_score = max(0.0, consistency_score)
+            fixes.append(f"Contradiction in {c.field}: {c.value_a} vs {c.value_b}")
 
-    # Evaluate Confidence (Supporting)
-    supporting_score = 0.0
-    if facts:
-        avg_conf = sum(f.confidence for f in facts) / len(facts)
-        supporting_score = avg_conf * WEIGHT_SUPPORTING
+    has_unknowns = any(r.status in ("UNKNOWN", "PARTIAL") for r in rule_results)
+    
+    if has_high_severity_contradiction or "FAIL" in [r.status for r in rule_results]:
+        verification_status = "REQUIRES_REVIEW"
+    elif has_unknowns or missing_docs or missing_evidence:
+        verification_status = "PARTIALLY_VERIFIED"
+    else:
+        verification_status = "FULLY_VERIFIED"
 
-    total_score = critical_score + evidence_score + consistency_score + supporting_score
-    grounded = len(facts) > 0
-
-    if not grounded:
+    if not facts:
         fixes.append("No evidence facts could be extracted.")
+        verification_status = "REQUIRES_REVIEW"
 
     return ReadinessResult(
         readiness_score=round(total_score, 1),
+        verification_status=verification_status,
         rule_results=rule_results,
         contradictions=contradictions,
-        missing_evidence=missing,
+        detected_documents=detected_docs_list,
+        missing_documents=missing_docs,
+        missing_evidence=missing_evidence,
         prioritized_fixes=fixes,
-        grounded=grounded,
+        score_breakdown=score_breakdown,
     )
