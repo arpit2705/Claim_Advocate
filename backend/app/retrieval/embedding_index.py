@@ -1,109 +1,144 @@
 """
-embedding_index.py — In-memory clause embedding index using sentence-transformers.
+Lightweight in-memory clause retrieval index.
 
-Builds embeddings for all Clause objects and provides:
-  - exact lookup by clause_id  (O(1) dict)
-  - semantic nearest-neighbour search via cosine similarity (pure numpy, no external DB)
+Uses token-overlap / TF-IDF-style scoring instead of
+sentence-transformers so the API can run on low-memory
+deployment instances such as Render Free.
 """
+
 from __future__ import annotations
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
+import math
+import re
+from collections import Counter
 
-from app.config import EMBEDDING_MODEL
 from app.schemas.policy import Clause
 
-# Lazy-loaded singleton model to avoid repeated heavy initialisation
-_model: SentenceTransformer | None = None
 
-
-def _get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
-    return _model
+def _tokenize(text: str) -> list[str]:
+    """Simple lightweight tokenizer."""
+    return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
 
 class ClauseEmbeddingIndex:
     """
-    In-memory embedding index for a list of Clause objects.
+    Lightweight clause index.
 
-    Attributes
-    ----------
-    clauses : list[Clause]
-        The indexed clauses.
-    _id_map : dict[str, Clause]
-        Fast O(1) lookup by clause_id.
-    _embeddings : np.ndarray | None
-        Matrix of shape (N, D) — one row per clause.
+    Provides:
+    - exact lookup by clause_id
+    - text-based similarity search
+    - no PyTorch
+    - no sentence-transformers
     """
 
     def __init__(self) -> None:
         self.clauses: list[Clause] = []
         self._id_map: dict[str, Clause] = {}
-        self._embeddings: np.ndarray | None = None
+        self._documents: list[Counter] = []
+        self._idf: dict[str, float] = {}
 
     def build(self, clauses: list[Clause]) -> None:
-        """
-        Index a list of clauses. Computes embeddings for all raw_text fields.
+        """Index clauses using lightweight token statistics."""
 
-        Parameters
-        ----------
-        clauses : list[Clause]
-            Clauses to index. Replaces any previously indexed clauses.
-        """
         self.clauses = clauses
         self._id_map = {c.clause_id: c for c in clauses}
 
+        self._documents = []
+        self._idf = {}
+
         if not clauses:
-            self._embeddings = None
             return
 
-        model = _get_model()
-        texts = [c.raw_text for c in clauses]
-        self._embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+        # Tokenize each clause
+        for clause in clauses:
+            tokens = _tokenize(clause.raw_text)
+            self._documents.append(Counter(tokens))
+
+        # Calculate lightweight IDF
+        document_count = len(self._documents)
+        document_frequency: Counter = Counter()
+
+        for doc in self._documents:
+            for token in doc:
+                document_frequency[token] += 1
+
+        for token, df in document_frequency.items():
+            self._idf[token] = math.log(
+                (document_count + 1) / (df + 1)
+            ) + 1.0
 
     def lookup_by_id(self, clause_id: str) -> Clause | None:
-        """
-        Exact lookup by clause_id.
-
-        Parameters
-        ----------
-        clause_id : str
-            The clause_id to look up.
-
-        Returns
-        -------
-        Clause | None
-            The clause if found, else None.
-        """
+        """Exact O(1) clause lookup."""
         return self._id_map.get(clause_id)
 
-    def semantic_search(self, query: str, top_k: int = 3) -> list[tuple[Clause, float]]:
-        """
-        Returns the top_k clauses most semantically similar to query.
+    def _score(self, query_tokens: list[str], document: Counter) -> float:
+        """Calculate lightweight TF-IDF-style similarity."""
 
-        Parameters
-        ----------
-        query : str
-            Natural language query / paraphrase.
-        top_k : int
-            Number of results to return.
+        if not query_tokens or not document:
+            return 0.0
 
-        Returns
-        -------
-        list[tuple[Clause, float]]
-            List of (clause, cosine_similarity_score) sorted descending.
+        query_counts = Counter(query_tokens)
+
+        query_vector = {}
+        doc_vector = {}
+
+        for token, count in query_counts.items():
+            if token in self._idf:
+                query_vector[token] = count * self._idf[token]
+
+        for token, count in document.items():
+            if token in self._idf:
+                doc_vector[token] = count * self._idf[token]
+
+        if not query_vector or not doc_vector:
+            return 0.0
+
+        # Dot product
+        dot = sum(
+            query_vector.get(token, 0.0) * doc_vector.get(token, 0.0)
+            for token in query_vector
+        )
+
+        # Magnitudes
+        query_norm = math.sqrt(
+            sum(value * value for value in query_vector.values())
+        )
+
+        doc_norm = math.sqrt(
+            sum(value * value for value in doc_vector.values())
+        )
+
+        if query_norm == 0 or doc_norm == 0:
+            return 0.0
+
+        return dot / (query_norm * doc_norm)
+
+    def semantic_search(
+        self,
+        query: str,
+        top_k: int = 3
+    ) -> list[tuple[Clause, float]]:
         """
-        if self._embeddings is None or len(self.clauses) == 0:
+        Return the top-k clauses using lightweight text similarity.
+
+        Keeps the same return format as the previous
+        sentence-transformer implementation.
+        """
+
+        if not self.clauses:
             return []
 
-        model = _get_model()
-        q_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
-        # Cosine similarity: embeddings are already L2-normalised → dot product
-        scores: np.ndarray = (self._embeddings @ q_emb.T).flatten()
-        top_indices = np.argsort(scores)[::-1][: min(top_k, len(self.clauses))]
-        return [(self.clauses[i], float(scores[i])) for i in top_indices]
+        query_tokens = _tokenize(query)
+
+        scored = []
+
+        for clause, document in zip(self.clauses, self._documents):
+            score = self._score(query_tokens, document)
+            scored.append((clause, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+
+        return scored[:min(top_k, len(scored))]
 
     def __len__(self) -> int:
         return len(self.clauses)
