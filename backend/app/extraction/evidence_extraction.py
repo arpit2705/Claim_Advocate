@@ -56,6 +56,7 @@ Expected fields:
   - room_rent_total: number
   - claim_intimation_date: string (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
   - claim_submission_date: string (YYYY-MM-DD)
+  - notification_delay_hours: integer (extract if stated explicitly, e.g., 'notified X hours after admission')
   - treatment_type: string (e.g., 'emergency', 'planned')
 
 Return exactly ONE JSON object matching this structure:

@@ -103,15 +103,34 @@ def validate_verdict(
         if final_verdict == "valid":
             final_verdict = "questionable"
 
-    # Rule 3: Deterministic rule failures override "valid"
+    # Rule 3: Deterministic rule PASSES override "valid" rejection
+    # (If the claim passed the rule, the insurer's rejection is likely wrong)
     if final_verdict == "valid" and rule_results:
-        failed_rules = [r for r in rule_results if not r.passed]
-        if failed_rules:
+        passed_rules = [r for r in rule_results if r.status == "PASS"]
+        partial_rules = [r for r in rule_results if r.status == "PARTIAL"]
+        
+        if passed_rules:
+            # If the rule that passed directly contradicts the rejection, make it likely misapplied.
+            # Otherwise, just questionable.
+            if any(r.rule_name in ("notification_timing", "coverage_period_check", "waiting_period_check", "deadline_check") for r in passed_rules):
+                final_verdict = "likely_misapplied"
+                override_reason = (
+                    f"Deterministic check(s) PASSED: "
+                    f"the claim satisfies the evaluated policy condition. "
+                    f"The rejection is not supported by the numeric/deterministic conditions."
+                )
+            else:
+                final_verdict = "questionable"
+                passed_names = ", ".join(r.rule_name for r in passed_rules)
+                override_reason = (
+                    f"Deterministic rule check(s) passed: {passed_names}. "
+                    f"Verdict downgraded from 'valid' to 'questionable'."
+                )
+        elif partial_rules and any(r.rule_name in ("notification_timing", "coverage_period_check", "waiting_period_check", "deadline_check") for r in partial_rules):
             final_verdict = "questionable"
-            failed_names = ", ".join(r.rule_name for r in failed_rules)
             override_reason = (
-                f"Deterministic rule check(s) failed: {failed_names}. "
-                f"Verdict downgraded from 'valid' to 'questionable'."
+                f"Deterministic check yielded a PARTIAL match. "
+                f"Rejection validity cannot be fully confirmed."
             )
 
     # Rule 4: High-severity contradictions override "valid"

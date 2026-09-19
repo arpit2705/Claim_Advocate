@@ -71,7 +71,7 @@ def test_validator_invalid_clause_id(base_clauses, base_facts):
 
 
 def test_validator_rule_failure_downgrades_valid(base_clauses, base_facts):
-    rules = [RuleResult(rule_name="deadline", passed=False, explanation="Late.")]
+    rules = [RuleResult(rule_name="deadline", status="FAIL", explanation="Late.")]
     verdict = validate_verdict(
         proposed_verdict="valid",
         proposed_matched_clause_id="CL-1",

@@ -38,7 +38,7 @@ def test_detect_contradiction_high_severity():
     assert len(flags) == 1
     assert flags[0].severity == "high"
     assert flags[0].field == "admission_date"
-    assert "inconsistent" in flags[0].note.lower()
+    assert "which differ" in flags[0].note.lower()
 
 
 def test_no_contradiction_same_value():

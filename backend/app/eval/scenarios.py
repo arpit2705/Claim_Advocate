@@ -60,7 +60,10 @@ READINESS_SCENARIOS = [
         ),
         "required_fields": ["admission_date"],
         "rule_inputs": [
-            {"rule": "deadline", "incident_date": "2023-01-01", "submission_date": "2024-01-01", "deadline_days": 30}
+            {"rule": "deadline", "incident_date": "2023-01-01", "submission_date": "2024-01-01",
+             "treatment_type": "unknown",
+             "deadline_rules": [{"event": "claim_submission", "hospitalization_type": None,
+                                 "reference_event": "admission", "deadline_value": 30, "deadline_unit": "days"}]}
         ],
         "expected_max_score": 60.0,
     }

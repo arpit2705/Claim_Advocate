@@ -132,19 +132,23 @@ class TestSubLimitCheck:
             claimed_amount=6000.0,
             sub_limit_amount=5000.0,
         )
-        assert "6000" in result.explanation
-        assert "5000" in result.explanation
+        assert "6,000" in result.explanation
+        assert "5,000" in result.explanation
 
 
 # ── deadline_check ────────────────────────────────────────────────────────────
 
 class TestDeadlineCheck:
 
+    _RULE_30_DAYS = [{"event": "claim_submission", "hospitalization_type": None,
+                      "reference_event": "admission", "deadline_value": 30, "deadline_unit": "days"}]
+
     def test_on_time_submission_passes(self):
         result = deadline_check(
             incident_date=date(2024, 3, 1),
             submission_date=date(2024, 3, 25),  # 24 days later
-            deadline_days=30,
+            treatment_type="unknown",
+            deadline_rules=self._RULE_30_DAYS,
         )
         assert result.passed is True
 
@@ -152,7 +156,8 @@ class TestDeadlineCheck:
         result = deadline_check(
             incident_date=date(2024, 3, 1),
             submission_date=date(2024, 3, 31),  # exactly 30 days
-            deadline_days=30,
+            treatment_type="unknown",
+            deadline_rules=self._RULE_30_DAYS,
         )
         assert result.passed is True
 
@@ -160,10 +165,11 @@ class TestDeadlineCheck:
         result = deadline_check(
             incident_date=date(2024, 3, 1),
             submission_date=date(2024, 5, 1),   # 61 days later
-            deadline_days=30,
+            treatment_type="unknown",
+            deadline_rules=self._RULE_30_DAYS,
         )
         assert result.passed is False
-        assert "past the" in result.explanation.lower() or "overdue" in result.explanation.lower() or "day" in result.explanation.lower()
+        assert "day" in result.explanation.lower()
 
 
 # ── coverage_period_check ─────────────────────────────────────────────────────

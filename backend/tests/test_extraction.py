@@ -209,7 +209,7 @@ def test_extract_facts_from_text_llm():
     Total Billed Amount: ₹45,000
     """
 
-    facts = extract_facts_from_text(sample_doc, document_label="hospital_bill")
+    raw_json, facts = extract_facts_from_text(sample_doc, document_label="hospital_bill")
 
     assert len(facts) > 0, "Should extract at least one fact"
 

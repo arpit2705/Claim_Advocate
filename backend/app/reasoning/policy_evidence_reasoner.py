@@ -30,6 +30,29 @@ You are an insurance claim adjudication assistant. You will be given:
   - A rejection reason stated by the insurer
   - The policy clause(s) cited or retrieved
   - The claim facts extracted from submitted documents
+  - Deterministic rule results (if any) computed by Python before this LLM call
+
+CRITICAL GROUNDING RULES — you MUST follow these:
+  1. You MUST inspect the retrieved policy clauses before concluding that no policy
+     clause addresses the insurer's stated reason. Never state that the policy
+     contains no relevant clause unless the RELEVANT POLICY CLAUSES section below
+     is empty.
+  2. If a DETERMINISTIC RULE RESULT is provided and its status is PASS or FAIL,
+     you MUST use that as the authoritative calculation for any numeric comparison
+     (hours, days, amounts, limits). Do NOT override a deterministic PASS with
+     unsupported semantic reasoning.
+  3. Never invent policy provisions, clause IDs, or facts not present in the
+     data provided. Distinguish clearly between:
+       - What the policy says (from RELEVANT POLICY CLAUSES)
+       - What the evidence shows (from CLAIM FACTS)
+       - What the insurer claims (from REJECTION REASON)
+       - What a deterministic check established (from DETERMINISTIC RULE RESULT)
+  4. If the deterministic result is PASS, the rejection reason is likely not
+     supported on that numeric ground — set verdict to "likely_misapplied".
+  5. If the deterministic result is FAIL, the rejection reason is likely supported
+     on that numeric ground — set verdict to "valid" unless other facts contradict it.
+  6. If evidence is insufficient to determine, use "insufficient_evidence" — do NOT
+     invent assumptions.
 
 Your task: determine whether the insurer's rejection reason is supported by the
 policy clause and the claim facts.
@@ -40,12 +63,12 @@ Return a JSON object with exactly these fields:
     * "questionable": the rejection has some basis but the application is unclear
     * "likely_misapplied": the clause does not clearly support the rejection
     * "insufficient_evidence": facts are too incomplete to determine either way
-  - explanation: 2-4 sentence reasoning citing specific clause language and facts
+  - explanation: 2-4 sentence reasoning citing specific clause language and facts,
+    and explicitly referencing the deterministic rule result if one was provided.
   - matched_clause_id: the clause_id most relevant to this rejection (or null)
   - mismatch_explanation: always provide a non-empty string. For "valid", explain why
-    the clause supports the rejection (e.g. "No mismatch identified — the cited clause's
-    wording is consistent with the claim facts, and the rejection is supported.").
-    For all other verdicts, explain the specific mismatch or gap found.
+    the clause supports the rejection. For all other verdicts, explain the specific
+    mismatch or gap found.
 
 Return only the JSON object. No prose outside it.
 """.strip()
@@ -56,6 +79,7 @@ def _single_pass(
     clauses: list[Clause],
     facts: list[EvidenceFact],
     temperature: float,
+    rule_results: list = None,
 ) -> dict[str, Any]:
     """Runs one LLM reasoning pass and returns the parsed JSON dict."""
     clause_text = "\n\n".join(
@@ -65,10 +89,21 @@ def _single_pass(
         f"- {f.field}: {f.value} (source: {f.source_document}, confidence: {f.confidence:.2f})"
         for f in facts
     )
+    
+    # Include deterministic rule results if available — ground the LLM
+    rule_section = ""
+    if rule_results:
+        rule_lines = "\n".join(
+            f"- [{r.rule_name}] STATUS: {r.status} — {r.explanation}"
+            for r in rule_results
+        )
+        rule_section = f"\n\nDETERMINISTIC RULE RESULTS (authoritative — do NOT contradict these):\n{rule_lines}"
+    
     context = (
         f"REJECTION REASON:\n{rejection_reason}\n\n"
         f"RELEVANT POLICY CLAUSES:\n{clause_text}\n\n"
         f"CLAIM FACTS:\n{fact_text}"
+        f"{rule_section}"
     )
 
     system_prompt, user_prompt = build_safe_prompt(
@@ -115,6 +150,7 @@ def run_three_pass_reasoning(
     rejection_reason: str,
     clauses: list[Clause],
     facts: list[EvidenceFact],
+    rule_results: list = None,
 ) -> list[dict[str, Any]]:
     """
     Runs 3 independent LLM reasoning passes and returns all three result dicts.
@@ -127,6 +163,8 @@ def run_three_pass_reasoning(
         Retrieved policy clauses relevant to the rejection.
     facts : list[EvidenceFact]
         Extracted claim facts.
+    rule_results : list[RuleResult], optional
+        Deterministic rule results to include as grounding context for the LLM.
 
     Returns
     -------
@@ -144,6 +182,6 @@ def run_three_pass_reasoning(
     # Slight temperature variation across passes for diversity
     temperatures = [0.0, 0.1, 0.2]
     return [
-        _single_pass(rejection_reason, clauses, facts, temp)
+        _single_pass(rejection_reason, clauses, facts, temp, rule_results=rule_results)
         for temp in temperatures
     ]

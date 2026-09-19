@@ -38,6 +38,7 @@ class DocumentFacts(BaseModel):
     # Dates
     claim_intimation_date: str | None = None
     claim_submission_date: str | None = None
+    notification_delay_hours: int | None = None
     
     treatment_type: str | None = None
 
